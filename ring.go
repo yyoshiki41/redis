@@ -230,30 +230,39 @@ func (c *Ring) rebalance() {
 
 // heartbeat monitors state of each shard in the ring.
 func (c *Ring) heartbeat() {
-	ticker := time.NewTicker(c.opt.HeartbeatFrequency)
+	ticker := internal.NewTicker(c.opt.HeartbeatFrequency)
 	defer ticker.Stop()
-	for _ = range ticker.C {
-		var rebalance bool
+	ch := ticker.Receive()
+	done := ticker.Done()
 
-		c.mu.RLock()
+loop:
+	for {
+		select {
+		case <-ch:
+			var rebalance bool
 
-		if c.closed {
-			c.mu.RUnlock()
-			break
-		}
+			c.mu.RLock()
 
-		for _, shard := range c.shards {
-			err := shard.Client.Ping().Err()
-			if shard.Vote(err == nil || err == pool.ErrPoolTimeout) {
-				internal.Logf("ring shard state changed: %s", shard)
-				rebalance = true
+			if c.closed {
+				c.mu.RUnlock()
+				break loop
 			}
-		}
 
-		c.mu.RUnlock()
+			for _, shard := range c.shards {
+				err := shard.Client.Ping().Err()
+				if shard.Vote(err == nil || err == pool.ErrPoolTimeout) {
+					internal.Logf("ring shard state changed: %s", shard)
+					rebalance = true
+				}
+			}
 
-		if rebalance {
-			c.rebalance()
+			c.mu.RUnlock()
+
+			if rebalance {
+				c.rebalance()
+			}
+		case <-done:
+			break loop
 		}
 	}
 }

@@ -337,23 +337,31 @@ func (p *ConnPool) ReapStaleConns() (int, error) {
 }
 
 func (p *ConnPool) reaper(frequency time.Duration) {
-	ticker := time.NewTicker(frequency)
+	ticker := internal.NewTicker(frequency)
 	defer ticker.Stop()
+	c := ticker.Receive()
+	done := ticker.Done()
 
-	for _ = range ticker.C {
-		if p.Closed() {
-			break
+loop:
+	for {
+		select {
+		case <-c:
+			if p.Closed() {
+				break loop
+			}
+			n, err := p.ReapStaleConns()
+			if err != nil {
+				internal.Logf("ReapStaleConns failed: %s", err)
+				continue
+			}
+			s := p.Stats()
+			internal.Logf(
+				"reaper: removed %d stale conns (TotalConns=%d FreeConns=%d Requests=%d Hits=%d Timeouts=%d)",
+				n, s.TotalConns, s.FreeConns, s.Requests, s.Hits, s.Timeouts,
+			)
+		case <-done:
+			break loop
 		}
-		n, err := p.ReapStaleConns()
-		if err != nil {
-			internal.Logf("ReapStaleConns failed: %s", err)
-			continue
-		}
-		s := p.Stats()
-		internal.Logf(
-			"reaper: removed %d stale conns (TotalConns=%d FreeConns=%d Requests=%d Hits=%d Timeouts=%d)",
-			n, s.TotalConns, s.FreeConns, s.Requests, s.Hits, s.Timeouts,
-		)
 	}
 }
 

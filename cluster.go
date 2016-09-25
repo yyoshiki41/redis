@@ -438,30 +438,38 @@ func (c *ClusterClient) setNodesLatency() {
 
 // reaper closes idle connections to the cluster.
 func (c *ClusterClient) reaper(frequency time.Duration) {
-	ticker := time.NewTicker(frequency)
+	ticker := internal.NewTicker(frequency)
 	defer ticker.Stop()
+	ch := ticker.Receive()
+	done := ticker.Done()
 
-	for _ = range ticker.C {
-		nodes := c.getNodes()
-		if nodes == nil {
-			break
-		}
-
-		var n int
-		for _, node := range nodes {
-			nn, err := node.Client.connPool.(*pool.ConnPool).ReapStaleConns()
-			if err != nil {
-				internal.Logf("ReapStaleConns failed: %s", err)
-			} else {
-				n += nn
+loop:
+	for {
+		select {
+		case <-ch:
+			nodes := c.getNodes()
+			if nodes == nil {
+				break loop
 			}
-		}
 
-		s := c.PoolStats()
-		internal.Logf(
-			"reaper: removed %d stale conns (TotalConns=%d FreeConns=%d Requests=%d Hits=%d Timeouts=%d)",
-			n, s.TotalConns, s.FreeConns, s.Requests, s.Hits, s.Timeouts,
-		)
+			var n int
+			for _, node := range nodes {
+				nn, err := node.Client.connPool.(*pool.ConnPool).ReapStaleConns()
+				if err != nil {
+					internal.Logf("ReapStaleConns failed: %s", err)
+				} else {
+					n += nn
+				}
+			}
+
+			s := c.PoolStats()
+			internal.Logf(
+				"reaper: removed %d stale conns (TotalConns=%d FreeConns=%d Requests=%d Hits=%d Timeouts=%d)",
+				n, s.TotalConns, s.FreeConns, s.Requests, s.Hits, s.Timeouts,
+			)
+		case <-done:
+			break loop
+		}
 	}
 }
 
